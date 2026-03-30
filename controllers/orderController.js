@@ -1,4 +1,5 @@
 const Order = require('../models/Order');
+const { sendOrderEmail, transporter } = require('../utils/email');
 
 /**
  * Create a new order (Admin only)
@@ -17,21 +18,24 @@ const createOrder = async (req, res) => {
 
         // Create order
         const order = new Order({
-            orderId, // Optional, will be auto-generated if not provided
+            orderId,
             customerName,
             customerEmail,
             productName,
             quantity,
             expectedDelivery,
             price: price || 0,
-            paymentStatus: paymentStatus || 'Pending' // Default to Pending if not provided
+            paymentStatus: paymentStatus || 'Pending'
         });
 
         await order.save();
 
+        // Send confirmation email asynchronously
+        sendOrderEmail(order, 'Order Placed').catch(err => console.error('Initial Order Email Error:', err));
+
         res.status(201).json({
             success: true,
-            message: 'Order created successfully',
+            message: 'Order created successfully and confirmation email sent',
             order
         });
 
@@ -50,7 +54,6 @@ const createOrder = async (req, res) => {
 const getOrderById = async (req, res) => {
     try {
         const { orderId } = req.params;
-
         const order = await Order.findOne({ orderId: orderId.toUpperCase() });
 
         if (!order) {
@@ -80,10 +83,8 @@ const getOrderById = async (req, res) => {
 const getAllOrders = async (req, res) => {
     try {
         const { page = 1, limit = 10, search = '', status = '', paymentStatus = '', sort = '' } = req.query;
-
         const query = {};
 
-        // Search Filter
         if (search) {
             query.$or = [
                 { orderId: { $regex: search, $options: 'i' } },
@@ -92,16 +93,12 @@ const getAllOrders = async (req, res) => {
             ];
         }
 
-        // Status Filter
         if (status) query.status = status;
-
-        // Payment Status Filter
         if (paymentStatus) query.paymentStatus = paymentStatus;
 
-        // Sorting Logic
-        let sortOption = { createdAt: -1 }; // Default
+        let sortOption = { createdAt: -1 };
         if (sort === 'rating') {
-            sortOption = { rating: -1 }; // Highest rating first
+            sortOption = { rating: -1 };
         } else if (sort === 'rating_asc') {
             sortOption = { rating: 1 };
         }
@@ -130,42 +127,23 @@ const getAllOrders = async (req, res) => {
 };
 
 /**
- * Update order status (Admin only)
- */
-const nodemailer = require('nodemailer');
-require('dotenv').config(); // Ensure env vars are loaded
-
-// Configure email transporter
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    }
-});
-
-// Log email configuration (do not log password)
-console.log('Email User configured:', process.env.EMAIL_USER);
-
-/**
  * Temporary Test Email Route
  */
 const sendTestEmail = async (req, res) => {
     try {
         const mailOptions = {
             from: process.env.EMAIL_USER,
-            to: process.env.EMAIL_USER, // Send to self
-            subject: 'Test Email from Order System',
-            text: 'If you receive this, Nodemailer is configured correctly.'
+            to: process.env.EMAIL_USER,
+            subject: 'Test Email - Order Tracking System',
+            text: 'SMTP configuration is working correctly!'
         };
 
         transporter.sendMail(mailOptions, (error, info) => {
             if (error) {
-                console.error('Test Email Error:', error);
+                console.error('Test Email SMTP Error:', error);
                 return res.status(500).json({ success: false, error: error.message });
             }
-            console.log('Test Email Sent:', info.response);
-            res.status(200).json({ success: true, message: 'Test email sent successfully' });
+            res.status(200).json({ success: true, message: 'Test email sent successfully', info: info.response });
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -180,8 +158,6 @@ const updateOrderStatus = async (req, res) => {
         const { orderId } = req.params;
         const { status, customerName, productName, quantity, expectedDelivery, paymentStatus, deliveryPersonPhone, estimatedDeliveryTime } = req.body;
 
-        console.log(`Updating Order ${orderId}. New Status: ${status}`);
-
         const order = await Order.findOne({ orderId: orderId.toUpperCase() });
 
         if (!order) {
@@ -192,12 +168,10 @@ const updateOrderStatus = async (req, res) => {
         }
 
         const oldStatus = order.status;
-        console.log(`Old Status: ${oldStatus}, New Status: ${status}`);
 
-        // Update fields if provided
+        // Update fields
         if (status) {
             order.status = status;
-            // Track History
             order.orderHistory.push({
                 status: status,
                 updatedAt: new Date(),
@@ -215,63 +189,13 @@ const updateOrderStatus = async (req, res) => {
 
         await order.save();
 
-        // Check availability of email credentials
-        if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-            // Send email if status changed OR if it was "Out for Delivery" and delivery details were updated
-            const statusChanged = status && status !== oldStatus;
-            const deliveryDetailsUpdated = status === 'Out for Delivery' && (deliveryPersonPhone !== undefined || estimatedDeliveryTime !== undefined);
+        // Email Trigger Logic
+        const statusChanged = status && status !== oldStatus;
+        const deliveryUpdated = status === 'Out for Delivery' && (deliveryPersonPhone !== undefined || estimatedDeliveryTime !== undefined);
 
-            if (statusChanged || deliveryDetailsUpdated) {
-                console.log('Sending update email notification...');
-                console.log(`Sending email to: ${order.customerEmail}`);
-
-                if (!order.customerEmail) {
-                    console.warn('WARNING: Customer email is missing!');
-                }
-
-                let emailText = `Hello ${order.customerName},
-
-We have an update regarding your order.
-
-Order ID: ${order.orderId}
-Product: ${order.productName}
-Current Status: ${order.status}
-Payment Status: ${order.paymentStatus || 'Pending'}
-
-Expected Delivery Date: ${new Date(order.expectedDelivery).toDateString()}`;
-
-                if (order.status === 'Out for Delivery') {
-                    if (order.deliveryPersonPhone) {
-                        emailText += `\nDelivery Person Phone: ${order.deliveryPersonPhone}`;
-                    }
-                    if (order.estimatedDeliveryTime) {
-                        emailText += `\nEstimated Delivery Time: ${order.estimatedDeliveryTime}`;
-                    }
-                }
-
-                emailText += `\n\nThank you for shopping with us.
-If you have any questions, feel free to contact our support team.`;
-
-                const mailOptions = {
-                    from: process.env.EMAIL_USER,
-                    to: order.customerEmail,
-                    subject: `Update on your Order ${order.orderId}`,
-                    text: emailText
-                };
-
-                // Send email asynchronously without blocking response
-                transporter.sendMail(mailOptions, (error, info) => {
-                    if (error) {
-                        console.error('Error sending email:', error);
-                    } else {
-                        console.log('Update email sent successfully:', info.response);
-                    }
-                });
-            } else {
-                console.log('No significant change detected. Skipping email notification.');
-            }
-        } else {
-            console.log('Email credentials not set. Skipping email notification.');
+        if (statusChanged || deliveryUpdated) {
+            sendOrderEmail(order, status || oldStatus)
+                .catch(err => console.error('Order Update Email Error:', err));
         }
 
         res.status(200).json({
@@ -295,7 +219,6 @@ If you have any questions, feel free to contact our support team.`;
 const deleteOrder = async (req, res) => {
     try {
         const { orderId } = req.params;
-
         const order = await Order.findOneAndDelete({ orderId: orderId.toUpperCase() });
 
         if (!order) {
@@ -341,12 +264,10 @@ const cancelOrder = async (req, res) => {
 
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
-        // Security check
         if (order.customerEmail !== req.user.email) {
             return res.status(403).json({ success: false, message: 'Unauthorized' });
         }
 
-        // Smart Cancellation Logic
         if (!['Order Placed', 'Confirmed'].includes(order.status)) {
             return res.status(400).json({
                 success: false,
@@ -355,8 +276,6 @@ const cancelOrder = async (req, res) => {
         }
 
         order.status = 'Cancelled';
-
-        // Update History
         order.orderHistory.push({
             status: 'Cancelled',
             updatedAt: new Date(),
@@ -364,6 +283,10 @@ const cancelOrder = async (req, res) => {
         });
 
         await order.save();
+        
+        // Send cancellation email
+        sendOrderEmail(order, 'Cancelled').catch(err => console.error('Cancellation Email Error:', err));
+
         res.status(200).json({ success: true, message: 'Order cancelled successfully' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -374,7 +297,7 @@ const cancelOrder = async (req, res) => {
  * Add Rating (Customer)
  */
 const addRating = async (req, res) => {
-    try {
+        try {
         const { orderId } = req.params;
         const { rating, review } = req.body;
         const order = await Order.findOne({ orderId: orderId.toUpperCase() });
@@ -390,7 +313,7 @@ const addRating = async (req, res) => {
         }
 
         order.rating = rating;
-        order.feedback = review; // Map review to feedback field in schema
+        order.feedback = review;
         await order.save();
         res.status(200).json({ success: true, message: 'Rating added successfully' });
     } catch (error) {
