@@ -1,11 +1,12 @@
 const nodemailer = require('nodemailer');
 
 /**
- * Configure email transporter
- * Using 'service: gmail' is more robust for cloud platforms like Render/Vercel
+ * Configure email transporter for Brevo SMTP
  */
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: "smtp-relay.brevo.com",
+    port: 587,
+    secure: false, // TLS
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
@@ -17,9 +18,9 @@ const transporter = nodemailer.createTransport({
  */
 transporter.verify((error, success) => {
     if (error) {
-        console.error('SMTP Connection Error:', error);
+        console.error('Brevo SMTP Connection Error:', error);
     } else {
-        console.log('SMTP Server is ready to take messages');
+        console.log('Brevo SMTP Server is ready to take messages');
     }
 });
 
@@ -29,7 +30,10 @@ transporter.verify((error, success) => {
  * @param {String} status - Current order status
  */
 const sendOrderEmail = async (order, status) => {
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    const emailUser = process.env.EMAIL_USER;
+    const emailPass = process.env.EMAIL_PASS;
+
+    if (!emailUser || !emailPass) {
         console.warn('Email credentials not set. Skipping email notification.');
         return;
     }
@@ -41,9 +45,8 @@ const sendOrderEmail = async (order, status) => {
 
     const emailText = `Hello ${order.customerName},
 
-We have an update regarding your order.
+Your order ${order.orderId} status has been updated.
 
-Order ID: ${order.orderId}
 Product: ${order.productName}
 Current Status: ${status}
 Payment Status: ${order.paymentStatus || 'Pending'}
@@ -58,9 +61,9 @@ Thank you for shopping with us.
 If you have any questions, feel free to contact our support team.`;
 
     const mailOptions = {
-        from: `Order Tracking <${process.env.EMAIL_USER}>`,
+        from: `"MS Orders" <ordertracking.notify19@gmail.com>`,
         to: order.customerEmail,
-        subject: `Update on your Order ${order.orderId} - ${status}`,
+        subject: `Order ${order.orderId} Status Update: ${status}`,
         text: emailText
     };
 
@@ -69,7 +72,7 @@ If you have any questions, feel free to contact our support team.`;
         console.log(`Email sent successfully to ${order.customerEmail}:`, info.response);
         return info;
     } catch (error) {
-        console.error(`Error sending email to ${order.customerEmail}:`, error);
+        console.error(`EMAIL ERROR for ${order.customerEmail}:`, error);
         throw error;
     }
 };

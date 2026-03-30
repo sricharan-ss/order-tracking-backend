@@ -30,8 +30,10 @@ const createOrder = async (req, res) => {
 
         await order.save();
 
-        // Send confirmation email asynchronously
-        sendOrderEmail(order, 'Order Placed').catch(err => console.error('Initial Order Email Error:', err));
+        // Send confirmation email for "Order Placed"
+        sendOrderEmail(order, 'Order Placed')
+            .then(() => console.log(`Confirmation email sent for Order ${order.orderId}`))
+            .catch(err => console.error('Initial Order Email Error:', err));
 
         res.status(201).json({
             success: true,
@@ -132,10 +134,10 @@ const getAllOrders = async (req, res) => {
 const sendTestEmail = async (req, res) => {
     try {
         const mailOptions = {
-            from: process.env.EMAIL_USER,
+            from: `"MS Orders" <ordertracking.notify19@gmail.com>`,
             to: process.env.EMAIL_USER,
-            subject: 'Test Email - Order Tracking System',
-            text: 'SMTP configuration is working correctly!'
+            subject: 'Test Email - Brevo SMTP',
+            text: 'If you receive this, Brevo SMTP is configured correctly!'
         };
 
         transporter.sendMail(mailOptions, (error, info) => {
@@ -189,13 +191,16 @@ const updateOrderStatus = async (req, res) => {
 
         await order.save();
 
-        // Email Trigger Logic
-        const statusChanged = status && status !== oldStatus;
-        const deliveryUpdated = status === 'Out for Delivery' && (deliveryPersonPhone !== undefined || estimatedDeliveryTime !== undefined);
-
-        if (statusChanged || deliveryUpdated) {
-            sendOrderEmail(order, status || oldStatus)
+        // Email Trigger Logic - ONLY for specific statuses per user requirement
+        // Statuses allowed: 'Out for Delivery', 'Delivered'
+        const notifyStatuses = ['Out for Delivery', 'Delivered'];
+        
+        if (status && notifyStatuses.includes(status) && status !== oldStatus) {
+            console.log(`Triggering email for status change: ${oldStatus} -> ${status}`);
+            sendOrderEmail(order, status)
                 .catch(err => console.error('Order Update Email Error:', err));
+        } else {
+            console.log(`Status change (${status}) does not require email notification.`);
         }
 
         res.status(200).json({
@@ -284,9 +289,10 @@ const cancelOrder = async (req, res) => {
 
         await order.save();
         
-        // Send cancellation email
-        sendOrderEmail(order, 'Cancelled').catch(err => console.error('Cancellation Email Error:', err));
-
+        // Note: The user specified "ONLY" Out for Delivery and Delivered for status updates.
+        // We'll keep Cancelled emails disabled for now as per the "ONLY" keyword, 
+        // unless they want to keep the existing behavior.
+        
         res.status(200).json({ success: true, message: 'Order cancelled successfully' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
