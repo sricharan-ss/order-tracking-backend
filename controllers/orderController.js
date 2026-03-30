@@ -1,5 +1,5 @@
 const Order = require('../models/Order');
-const { sendOrderEmail, transporter } = require('../utils/email');
+const { sendOrderEmail } = require('../utils/email');
 
 /**
  * Create a new order (Admin only)
@@ -30,10 +30,10 @@ const createOrder = async (req, res) => {
 
         await order.save();
 
-        // Send confirmation email for "Order Placed"
+        // Send confirmation email for "Order Placed" via REST API
         sendOrderEmail(order, 'Order Placed')
-            .then(() => console.log(`Confirmation email sent for Order ${order.orderId}`))
-            .catch(err => console.error('Initial Order Email Error:', err));
+            .then(() => console.log(`Confirmation email sent via REST for Order ${order.orderId}`))
+            .catch(err => console.error('Initial Order Email REST Error:', err));
 
         res.status(201).json({
             success: true,
@@ -129,23 +129,23 @@ const getAllOrders = async (req, res) => {
 };
 
 /**
- * Temporary Test Email Route
+ * Temporary Test Email Route (REST API)
  */
 const sendTestEmail = async (req, res) => {
     try {
-        const mailOptions = {
-            from: `"MS Orders" <ordertracking.notify19@gmail.com>`,
-            to: process.env.EMAIL_USER,
-            subject: 'Test Email - Brevo SMTP',
-            text: 'If you receive this, Brevo SMTP is configured correctly!'
+        const testOrder = {
+            orderId: 'TEST-123',
+            customerName: 'Test User',
+            customerEmail: 'ordertracking.notify19@gmail.com', // Sending to self for test
+            productName: 'Test Product',
+            expectedDelivery: new Date()
         };
 
-        transporter.sendMail(mailOptions, (error, info) => {
-            if (error) {
-                console.error('Test Email SMTP Error:', error);
-                return res.status(500).json({ success: false, error: error.message });
-            }
-            res.status(200).json({ success: true, message: 'Test email sent successfully', info: info.response });
+        const result = await sendOrderEmail(testOrder, 'Test Notification');
+        res.status(200).json({ 
+            success: true, 
+            message: 'Test email sent successfully via Brevo REST API', 
+            result 
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -196,11 +196,11 @@ const updateOrderStatus = async (req, res) => {
         const notifyStatuses = ['Out for Delivery', 'Delivered'];
         
         if (status && notifyStatuses.includes(status) && status !== oldStatus) {
-            console.log(`Triggering email for status change: ${oldStatus} -> ${status}`);
+            console.log(`Triggering REST email for status change: ${oldStatus} -> ${status}`);
             sendOrderEmail(order, status)
-                .catch(err => console.error('Order Update Email Error:', err));
+                .catch(err => console.error('Order Update REST Email Error:', err));
         } else {
-            console.log(`Status change (${status}) does not require email notification.`);
+            console.log(`Status change (${status}) does not require REST email notification.`);
         }
 
         res.status(200).json({
@@ -289,9 +289,8 @@ const cancelOrder = async (req, res) => {
 
         await order.save();
         
-        // Note: The user specified "ONLY" Out for Delivery and Delivered for status updates.
-        // We'll keep Cancelled emails disabled for now as per the "ONLY" keyword, 
-        // unless they want to keep the existing behavior.
+        // As per the "ONLY" status requirement, cancellation emails are currently not sent via REST 
+        // to maintain the specific triggers requested. 
         
         res.status(200).json({ success: true, message: 'Order cancelled successfully' });
     } catch (error) {
